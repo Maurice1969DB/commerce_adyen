@@ -1,0 +1,654 @@
+diff --git a/commerce_adyen.libraries.yml b/commerce_adyen.libraries.yml
+new file mode 100644
+index 0000000..0c472d9
+--- /dev/null
++++ b/commerce_adyen.libraries.yml
+@@ -0,0 +1,27 @@
++payment_methods:
++  version: VERSION
++  js:
++    js/commerce_adyen.payment_methods.js: {}
++  dependencies:
++    - core/jquery
++    - core/jquery.once
++    - core/drupal
++    - core/drupalSettings
++
++adyen_js:
++  remote: https://github.com/Adyen/adyen-php-api-library
++  version: VERSION
++  license:
++    name: MIT
++    url: https://github.com/Adyen/adyen-php-api-library/blob/develop/LICENSE
++    gpl-compatible: true
++  header: true
++  js:
++    https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/3.9.5/adyen.js: { type: external, attributes:{integrity: sha384-xXs1tPf7iFMwbRiKdAsFcjBr2vdHL5HtYzWRc9y7hRwDDrtneGA4E6saDmXi+KrY, crossorigin: anonymous} }
++
++adyen_css:
++  version: VERSION
++  header: true
++  css:
++    theme:
++      https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/3.9.5/adyen.css: { type: external }
+diff --git a/commerce_adyen.routing.yml b/commerce_adyen.routing.yml
+index bdf6e7d..e72da02 100644
+--- a/commerce_adyen.routing.yml
++++ b/commerce_adyen.routing.yml
+@@ -14,3 +14,15 @@ commerce_adyen.boleto_redirect_302:
+     no_cache: TRUE
+   requirements:
+     _access: 'TRUE'
++commerce_adyen.payment.form:
++  path: '/paymentmethods'
++  defaults:
++    _controller: '\Drupal\commerce_adyen\Controller\ComponentPaymentController::handlePaymentMethodAction'
++  requirements:
++    _permission: 'access content'
++commerce_adyen.paymentdetails.form:
++  path: '/paymentdetailsmethods'
++  defaults:
++    _controller: '\Drupal\commerce_adyen\Controller\ComponentPaymentDetailsController::handlePaymentDetailsAction'
++  requirements:
++    _permission: 'access content'
+diff --git a/config/schema/commerce_adyen.schema.yml b/config/schema/commerce_adyen.schema.yml
+index 8cc8bc0..fd1fe9b 100644
+--- a/config/schema/commerce_adyen.schema.yml
++++ b/config/schema/commerce_adyen.schema.yml
+@@ -7,6 +7,16 @@ commerce_adyen.settings:
+     commerce_adyen_disable_automatic_capture_on_authorisation:
+       type: boolean
+ 
++commerce_payment.commerce_payment_gateway.plugin.adyen_redirect_checkout:
++  type: commerce_payment_gateway_configuration
++  mapping:
++    api_key:
++      type: string
++      label: 'API key'
++    merchant_account:
++      type: string
++      label: 'Merchant Account'
++
+ commerce_payment.commerce_payment_gateway.plugin.adyen_boleto:
+   type: commerce_payment_gateway_configuration
+   mapping:
+diff --git a/js/commerce_adyen.payment_methods.js b/js/commerce_adyen.payment_methods.js
+new file mode 100644
+index 0000000..85c3b0a
+--- /dev/null
++++ b/js/commerce_adyen.payment_methods.js
+@@ -0,0 +1,75 @@
++(function ($, Drupal, drupalSettings) {
++  'use strict';
++
++  function makePayment(data){
++    return Promise.resolve($.ajax({
++      type: 'POST',
++      dataType: 'json',
++      url: "/paymentmethods",
++      data: JSON.stringify(data),
++    }));
++  }
++
++  function makeDetailsCall(data)
++  {
++    return Promise.resolve(
++      $.ajax({
++          type: 'POST',
++          dataType: 'json',
++          url: "/paymentdetailsmethods",
++          data: JSON.stringify(data),
++        }
++      )
++    );
++  }
++
++  function showFinalResult(response)
++  {
++
++  }
++
++  Drupal.behaviors.commerceAdyen = {
++    attach: function (context) {
++      let data = drupalSettings.commerce_adyen;
++
++      $(context).find('#dropin-container').once().each(function () {
++        const configuration = {
++          paymentMethodsResponse: data,
++          originKey:"pub.v2.8215942018260198.aHR0cDovL2IyMDJhMDBjNWUxYS5uZ3Jvay5pbw.rHIUiLVr_FdYhh2CujM6gaaJqE5d4EpEB7PAtNIwcXY",
++          locale: "nl-NL",
++          environment: "test",
++          onSubmit: (state, dropin) => {
++            makePayment(state.data)
++              .then(response => {
++                if (response.action) {
++                  console.log(response);
++                  dropin.handleAction(response.action);
++                } else {
++                  console.log(response);
++                  showFinalResult(response);
++                }
++              })
++              .catch(error => {
++                throw Error(error);
++              });
++          },
++          onAdditionalDetails: (state, dropin) => {
++            makeDetailsCall(state.data)
++              .then(response => {
++                if (response.action) {
++                  dropin.handleAction(response.action);
++                } else {
++                  showFinalResult(response);
++                }
++              })
++              .catch(error => {
++                throw Error(error);
++              });
++          },
++        };
++          const checkout = new AdyenCheckout(configuration);
++          const dropin = checkout.create('dropin').mount('#dropin-container');
++      });
++    }
++  };
++}(jQuery, Drupal, drupalSettings));
+diff --git a/src/Adyen/ComponentPaymentClientTrait.php b/src/Adyen/ComponentPaymentClientTrait.php
+new file mode 100644
+index 0000000..a1f5206
+--- /dev/null
++++ b/src/Adyen/ComponentPaymentClientTrait.php
+@@ -0,0 +1,32 @@
++<?php
++
++namespace Drupal\commerce_adyen\Adyen;
++
++use Adyen\Client as AdyenClient;
++use Drupal\commerce_payment\Entity\PaymentGatewayInterface;
++
++/**
++ * Trait for AdyenClient.
++ */
++trait ComponentPaymentClientTrait {
++
++  /**
++   * Gets a AdyenClient.
++   *
++   * @param \Drupal\commerce_payment\Entity\PaymentGatewayInterface $gateway
++   *
++   * @return \Adyen\Client
++   * @throws \Adyen\AdyenException
++   */
++  public function getClientGateway(PaymentGatewayInterface $gateway) {
++    $client = new AdyenClient();
++    $configuration = $gateway->getPlugin()->getConfiguration();
++    $client->setXApiKey($configuration['api_key']);
++    if (isset($client)) {
++      $client->setEnvironment($configuration['mode']);
++    }
++
++    return $client;
++  }
++
++}
+diff --git a/src/Adyen/ComponentPaymentControllerTrait.php b/src/Adyen/ComponentPaymentControllerTrait.php
+new file mode 100644
+index 0000000..d53960b
+--- /dev/null
++++ b/src/Adyen/ComponentPaymentControllerTrait.php
+@@ -0,0 +1,37 @@
++<?php
++
++namespace Drupal\commerce_adyen\Adyen;
++
++use Drupal;
++
++/**
++ * Trait for PaymentsControllers.
++ */
++trait ComponentPaymentControllerTrait {
++  use ComponentPaymentClientTrait;
++
++  /**
++   * Gets OrderId
++   *
++   * @todo This is maybe not the ideal solution
++   * @return int|string|null
++   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
++   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
++   */
++  public function getOrderId() {
++    $user = Drupal::currentUser();
++    $uid = $user->id();
++    $order_id = NULL;
++
++    $orders = Drupal::entityTypeManager()->getStorage('commerce_order')
++      ->loadByProperties(['uid' => $uid, 'state' => 'draft']);
++
++    if (isset($orders)) {
++      $max_id = max(array_keys($orders));
++      $order_id = ($orders[$max_id])->id();
++    }
++
++    return $order_id;
++  }
++
++}
+diff --git a/src/Controller/ComponentPaymentController.php b/src/Controller/ComponentPaymentController.php
+new file mode 100644
+index 0000000..1307688
+--- /dev/null
++++ b/src/Controller/ComponentPaymentController.php
+@@ -0,0 +1,123 @@
++<?php
++
++namespace Drupal\commerce_adyen\Controller;
++
++use Adyen\AdyenException;
++use Adyen\Service\Checkout;
++use Drupal;
++use Drupal\commerce_adyen\Adyen\ComponentPaymentControllerTrait;
++use Drupal\Core\Controller\ControllerBase;
++use Exception;
++use stdClass;
++use Symfony\Component\HttpFoundation\JsonResponse;
++use Symfony\Component\HttpFoundation\Request;
++use Drupal\commerce_order\Entity\Order;
++
++/**
++ * Controller for handling payments by Adyen Components
++ */
++class ComponentPaymentController extends ControllerBase {
++
++  use ComponentPaymentControllerTrait;
++
++  /**
++   * Receives and handles payment request from front-end.
++   * @todo not fully implemented yet. Needs to handle all kinds of result codes.
++   * @param \Symfony\Component\HttpFoundation\Request $request
++   *
++   * @return \Symfony\Component\HttpFoundation\JsonResponse
++   * @throws \Adyen\AdyenException
++   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
++   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
++   * @throws \Drupal\Core\Entity\EntityStorageException
++   */
++  public function handlePaymentMethodAction(Request $request) {
++
++    $orderId = $this->getOrderId();
++    $order = Order::load($orderId);
++    $string = $request->getContent();
++    $dropin_data = json_decode($string);
++    $gateway = $order->get('payment_gateway')->entity;
++    $configuration = $gateway->getPlugin()->getConfiguration();
++    $service = new stdClass();
++    $result = [];
++
++    $total_price = $order->getTotalPrice();
++
++    $value = commerce_adyen_amount((float) $total_price->getNumber(), $total_price->getCurrencyCode());
++    $params = [
++      "amount" => [
++        "currency" => $total_price->getCurrencyCode(),
++        "value" => $value,
++      ],
++      "reference" => $orderId,
++      "paymentMethod" => $dropin_data->paymentMethod,
++      // @todo dependency injection?
++      "returnUrl" => Drupal::request()->getSchemeAndHttpHost() . '/checkout/' . $orderId . '/payment/return',
++      "merchantAccount" => $configuration['merchant_account'],
++    ];
++
++    $client = $this->getClientGateway($gateway);
++    try {
++      $service = new Checkout($client);
++    }
++    catch (Exception $e) {
++      // @todo Dependency injection?
++      Drupal::logger('type')->error($e->getMessage());
++    }
++
++    try {
++      $result = $service->payments($params);
++    }
++    catch (AdyenException $e) {
++    }
++
++    if (isset($result['action']) || array_key_exists("action", $result)) {
++      return new JsonResponse($result);
++    }
++
++    switch ($result['resultCode']) {
++      case 'Authorized':
++        $payment_storage = $this->entityTypeManager()
++          ->getStorage('commerce_payment');
++        $payment = $payment_storage->create([
++          'state' => 'completed',
++          'amount' => $order->getBalance(),
++          'payment_gateway' => $gateway->id(),
++          'order_id' => $order->id(),
++          'remote_id' => $result['pspReference'],
++          'remote_state' => $result['resultCode'],
++        ]);
++
++        $payment->save();
++        break;
++
++      case 'Refused':
++        // @todo to be implemented
++        break;
++
++      case 'Error':
++        // @todo to be implemented
++        break;
++
++      case 'Pending':
++        // @todo to be implemented
++      break;
++
++      case 'PresentToShopper':
++        // @todo to be implemented
++      break;
++
++      case 'Received':
++        // @todo to be implemented
++      break;
++
++      default:
++        // @todo to be implemented
++      break;
++    }
++
++    return (isset($result['resultCode']) ? new JsonResponse($result['resultCode']) : new JsonResponse(['error' => 'no result']));
++  }
++
++}
+diff --git a/src/Controller/ComponentPaymentDetailsController.php b/src/Controller/ComponentPaymentDetailsController.php
+new file mode 100644
+index 0000000..a42b417
+--- /dev/null
++++ b/src/Controller/ComponentPaymentDetailsController.php
+@@ -0,0 +1,57 @@
++<?php
++
++namespace Drupal\commerce_adyen\Controller;
++
++use Adyen\AdyenException;
++use Adyen\Service\Checkout;
++use Drupal;
++use Drupal\commerce_adyen\Adyen\Authorisation\Request;
++use Drupal\commerce_adyen\Adyen\ComponentPaymentControllerTrait;
++use Drupal\commerce_order\Entity\Order;
++use Drupal\Core\Controller\ControllerBase;
++use Symfony\Component\HttpFoundation\JsonResponse;
++
++/**
++ * Controller for handling the optional payment details after payment
++ */
++class ComponentPaymentDetailsController extends ControllerBase {
++  use ComponentPaymentControllerTrait;
++
++  /**
++   * Handles payment details request from front-end.
++   * @param \Drupal\commerce_adyen\Adyen\Authorisation\Request $request
++   *
++   * @return \Symfony\Component\HttpFoundation\JsonResponse
++   * @throws \Adyen\AdyenException
++   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
++   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
++   */
++  public function handlePaymentDetailsAction(Request $request) {
++    $orderId = $this->getOrderId();
++    $string = Drupal::request()->getContent();
++    $dropin_data = json_decode($string);
++    $result = [];
++    $service = new \stdClass();
++    $client = $this->getClientGateway(Order::load($orderId)->get('payment_gateway')->entity);
++    try {
++      $service = new Checkout($client);
++    }
++    catch (\Exception $e) {
++      Drupal::logger('type')->error($e->getMessage());
++    }
++    try {
++      $result = $service->paymentsDetails($dropin_data);
++    }
++    catch (AdyenException $e) {
++      Drupal::logger('type')->error($e->getMessage());
++    }
++
++    if (isset($result['action']) || array_key_exists("action", $result)) {
++      return new JsonResponse($result);
++    }
++
++    return (isset($result['resultCode']) ? new JsonResponse($result['resultCode']) : new JsonResponse(['error' => 'no result']));
++
++  }
++
++}
+diff --git a/src/Plugin/Commerce/PaymentGateway/ComponentPayment.php b/src/Plugin/Commerce/PaymentGateway/ComponentPayment.php
+new file mode 100644
+index 0000000..2827012
+--- /dev/null
++++ b/src/Plugin/Commerce/PaymentGateway/ComponentPayment.php
+@@ -0,0 +1,95 @@
++<?php
++
++namespace Drupal\commerce_adyen\Plugin\Commerce\PaymentGateway;
++
++use Drupal\commerce_order\Entity\OrderInterface;
++use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
++use Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException;
++use Drupal\Component\Plugin\Exception\PluginNotFoundException;
++use Drupal\Core\Form\FormStateInterface;
++use Symfony\Component\HttpFoundation\Request;
++
++/**
++ * Class AdyenPayment.
++ *
++ * @package Drupal\commerce_adyen\Plugin\Commerce\PaymentGateway
++ * @CommercePaymentGateway(
++ *   id = "adyen_component_payment",
++ *   label= "Adyen Gateway Payment",
++ *   display_label= "Adyen Component Payment",
++ *   forms={
++ *      "offsite-payment" = "Drupal\commerce_adyen\PluginForm\ComponentPaymentForm",
++ *   }
++ * )
++ */
++class ComponentPayment extends OffsitePaymentGatewayBase {
++  /**
++   * {@inheritdoc}
++   * @return array|string[]
++   */
++  public function defaultConfiguration() {
++    return [
++      'api_key' => '',
++      'merchant_account' => '',
++    ] + parent::defaultConfiguration();
++  }
++
++  /**
++   * {@inheritdoc }
++   */
++  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
++    $form = parent::buildConfigurationForm($form, $form_state);
++    $form['api_key'] = [
++      '#type' => 'textfield',
++      '#maxlength' => 160,
++      '#title' => $this->t('API Key'),
++      '#default_value' => $this->configuration['api_key'],
++      '#required' => TRUE,
++    ];
++    $form['merchant_account'] = [
++      '#type' => 'textfield',
++      '#title' => $this->t('Merchant Account'),
++      '#default_value' => $this->configuration['merchant_account'],
++      '#required' => TRUE,
++    ];
++    return $form;
++  }
++
++  /**
++   * {@inheritdoc }
++   */
++  public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
++
++    parent::submitConfigurationForm($form, $form_state);
++    if (!$form_state->getErrors()) {
++      $values = $form_state->getValue($form['#parents']);
++      $this->configuration['api_key'] = $values['api_key'];
++      $this->configuration['merchant_account'] = $values['merchant_account'];
++    }
++  }
++
++  /**
++   * {@inheritdoc }
++   * @throws \Drupal\Core\Entity\EntityStorageException
++   */
++  public function onReturn(OrderInterface $order, Request $request) {
++    parent::onReturn($order, $request);
++    try {
++      $payment_storage = $this->entityTypeManager->getStorage('commerce_payment');
++    } catch (InvalidPluginDefinitionException $e) {
++    } catch (PluginNotFoundException $e) {
++    }
++    if (isset($payment_storage)){
++      $payment = $payment_storage->create([
++        'state' => 'authorization',
++        'amount' => $order->getBalance(),
++        'payment_gateway' => $this->parentEntity->id(),
++        'order_id' => $order->id(),
++        'remote_id' => $request->query->get('txn_id'),
++        'remote_state' => $request->query->get('payment_status'),
++      ]);
++      $payment->save();
++    }
++  }
++
++}
+diff --git a/src/PluginForm/ComponentPaymentForm.php b/src/PluginForm/ComponentPaymentForm.php
+new file mode 100644
+index 0000000..669aaea
+--- /dev/null
++++ b/src/PluginForm/ComponentPaymentForm.php
+@@ -0,0 +1,119 @@
++<?php
++
++namespace Drupal\commerce_adyen\PluginForm;
++
++use Adyen\Service\Checkout;
++use Drupal;
++use Drupal\commerce_adyen\Adyen\ComponentPaymentClientTrait;
++use Drupal\commerce_payment\PluginForm\PaymentOffsiteForm as BasePaymentOffsiteForm;
++use Drupal\Core\Form\FormInterface;
++use Drupal\Core\Form\FormStateInterface;
++use Exception;
++
++/**
++ *  Adyen Component Form.
++ */
++class ComponentPaymentForm extends BasePaymentOffsiteForm implements FormInterface {
++
++  use ComponentPaymentClientTrait;
++
++  /**
++   * Build the form.
++   *
++   * @param array $form
++   * @param \Drupal\Core\Form\FormStateInterface $form_state
++   * @param null $string
++   *
++   * @return array
++   * @throws \Adyen\AdyenException
++   */
++  public function buildConfigurationForm(array $form,
++                                         FormStateInterface $form_state,
++                                         $string = NULL) {
++    $form = parent::buildConfigurationForm($form, $form_state);
++    /** @var \Drupal\commerce_payment\Entity\PaymentInterface $payment */
++    $payment = $this->entity;
++    /** @var \Drupal\commerce_order\Entity\Order $order */
++    $order = $payment->getOrder();
++    $billing_profile = $order->getBillingProfile();
++    $billing_profile_values = $billing_profile->toArray();
++    $address = $billing_profile_values['address'][0];
++
++    $gateway = $payment->getPaymentGateway();
++
++    if (!empty($form_state->getValues()) || !empty($form_state->getUserInput())) {
++      return $form;
++    }
++
++    $client = $this->getClientGateway($gateway);
++    $configuration = $gateway->getPlugin()->getConfiguration();
++    $user = Drupal::currentUser();
++    $language = $user->getPreferredLangcode();
++    try {
++      $service = new Checkout($client);
++    }
++    catch (Exception $e) {
++      Drupal::logger('type')->error($e->getMessage());
++    }
++    $params = [
++      "merchantAccount" => $configuration['merchant_account'],
++      "shopperLocale" => $language,
++      "countryCode" => $address['country_code'],
++      "amount" => [
++        "currency" => $payment->getAmount()->getCurrencyCode(),
++        "value" => floatval($payment->getAmount()->getNumber()),
++      ],
++      "channel" => "Web",
++    ];
++
++    if (isset($service)) {
++      $result = $service->paymentMethods($params);
++
++      $form['#attached']['library'][] = 'commerce_adyen/adyen_js';
++      $form['#attached']['library'][] = 'commerce_adyen/adyen_css';
++
++      $form['#attached']['library'][] = 'commerce_adyen/payment_methods';
++      $form['#attached']['drupalSettings']['commerce_adyen'] = $result;
++
++      $form['dropin_markup'] = [
++        '#type' => 'markup',
++        '#markup' => '<div id="dropin-container"></div>',
++      ];
++
++      return $form;
++    }
++    return array();
++  }
++
++  /**
++   * Get form ID.
++   */
++  public function getFormId() {
++    // TODO: Implement getFormId() method.
++  }
++
++  /**
++   * @param array $form
++   * @param \Drupal\Core\Form\FormStateInterface $form_state
++   */
++  public function buildForm(array $form, FormStateInterface $form_state) {
++    // TODO: Implement buildForm() method.
++  }
++
++  /**
++   * @param array $form
++   * @param \Drupal\Core\Form\FormStateInterface $form_state
++   */
++  public function validateForm(array &$form, FormStateInterface $form_state) {
++    // TODO: Implement validateForm() method.
++  }
++
++  /**
++   * @param array $form
++   * @param \Drupal\Core\Form\FormStateInterface $form_state
++   */
++  public function submitForm(array &$form, FormStateInterface $form_state) {
++    // TODO: Implement submitForm() method.
++  }
++
++}
