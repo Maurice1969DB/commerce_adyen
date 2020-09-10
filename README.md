@@ -1,5 +1,6 @@
 # commerce_adyen
-Patch for Commerce Adyen for Drupal 8 to include Adyen Drop-in
+## Patches
+1. Patch for Commerce Adyen for Drupal 8 to include Adyen Drop-in
 
 Adyen introduced Web Components and Dropin as a substitute for HPP redirects. Components (payment methods) are rendered on site. 
 This creates a cleaner interface. This patch renders the components at the payment pane. 
@@ -17,3 +18,5 @@ Remaining tasks
 
 User interface changes
 On the payment pane it is now possible to show all payment methods.
+
+2. Patch for 'billing information required'
