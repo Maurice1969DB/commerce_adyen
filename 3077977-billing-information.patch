@@ -1,0 +1,85 @@
+diff --git a/src/Plugin/Commerce/PaymentGateway/Boleto.php b/src/Plugin/Commerce/PaymentGateway/Boleto.php
+index 7399da3..762380e 100644
+--- a/src/Plugin/Commerce/PaymentGateway/Boleto.php
++++ b/src/Plugin/Commerce/PaymentGateway/Boleto.php
+@@ -21,6 +21,7 @@ use Symfony\Component\HttpFoundation\Request;
+  *   credit_card_types = {
+  *     "amex", "dinersclub", "discover", "jcb", "maestro", "mastercard", "visa",
+  *   },
++ *   requires_billing_information = FALSE,
+  * )
+  */
+ class Boleto extends OffsitePaymentGatewayBase {
+diff --git a/src/Plugin/Commerce/PaymentGateway/OpenInvoice.php b/src/Plugin/Commerce/PaymentGateway/OpenInvoice.php
+index 5025fbe..9db2360 100644
+--- a/src/Plugin/Commerce/PaymentGateway/OpenInvoice.php
++++ b/src/Plugin/Commerce/PaymentGateway/OpenInvoice.php
+@@ -21,6 +21,7 @@ use Symfony\Component\HttpFoundation\Request;
+  *   credit_card_types = {
+  *     "amex", "dinersclub", "discover", "jcb", "maestro", "mastercard", "visa",
+  *   },
++ *   requires_billing_information = TRUE,
+  * )
+  */
+ class OpenInvoice extends OffsitePaymentGatewayBase {
+diff --git a/src/PluginForm/BoletoPaymentForm.php b/src/PluginForm/BoletoPaymentForm.php
+index 87c99c8..33c08ea 100644
+--- a/src/PluginForm/BoletoPaymentForm.php
++++ b/src/PluginForm/BoletoPaymentForm.php
+@@ -14,6 +14,7 @@ use germanoricardi\helpers\BrazilianHelper;
+  */
+ class BoletoPaymentForm extends BasePaymentOffsiteForm {
+ 
++
+   /**
+    * {@inheritdoc}
+    */
+@@ -79,17 +80,30 @@ class BoletoPaymentForm extends BasePaymentOffsiteForm {
+     $order = $payment->getOrder();
+     /** @var \Drupal\profile\Entity\Profile $billing_profile */
+     $billing_profile = $order->getBillingProfile();
+-    $billing_profile_values = $billing_profile->toArray();
+-    $address = $billing_profile_values['address'][0];
++    if ($billing_profile) {
++      $billing_profile_values = $billing_profile->toArray();
++      $address = $billing_profile_values['address'][0];
++    }
++
+     $fom_values = $form_state->getValues();
+     $social_number = $fom_values['payment_process']['offsite_payment']['social_number'];
+ 
+     $adyen_order = new \stdClass();
+     $adyen_order->order_id = $order->id();
+     $adyen_order->order_number = $order->id();
+-    $adyen_order->uid = $billing_profile_values['uid']['target_id'];
+-    $adyen_order->owner = [
+-      'name' => $address['given_name'] . " " . $address['family_name'],
++
++    if (isset($billing_profile_values) && isset($address)) {
++      $adyen_order->uid = $billing_profile_values['uid']['target_id'];
++      $adyen_order->owner = [
++        'name' => $address['given_name'] . " " . $address['family_name'],
++      ];
++
++    }
++    $adyen_order->commerce_customer_billing = [
++      'commerce_customer_address' => [
++        'country' => isset($address['country_code'])
++          ? $address['country_code'] : 'BR',
++      ],
+     ];
+     $adyen_order->mail = $order->getEmail();
+     $adyen_order->status = 1;
+@@ -105,11 +119,7 @@ class BoletoPaymentForm extends BasePaymentOffsiteForm {
+       'amount' => $payment->getAmount()->getNumber(),
+       'currency_code' => $payment->getAmount()->getCurrencyCode(),
+     ];
+-    $adyen_order->commerce_customer_billing = [
+-      'commerce_customer_address' => [
+-        'country' => $address['country_code'],
+-      ],
+-    ];
++
+     $gateway = $payment->getPaymentGateway();
+     $gateway_configuration = $gateway->get('configuration');
+ 
