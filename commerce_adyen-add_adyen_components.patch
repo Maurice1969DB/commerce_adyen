@@ -115,7 +115,7 @@ index 0000000..85c3b0a
 +      $(context).find('#dropin-container').once().each(function () {
 +        const configuration = {
 +          paymentMethodsResponse: data,
-+          originKey:"pub.v2.8215942018260198.aHR0cDovL2IyMDJhMDBjNWUxYS5uZ3Jvay5pbw.rHIUiLVr_FdYhh2CujM6gaaJqE5d4EpEB7PAtNIwcXY",
++          originKey:"YOUR_KEY",
 +          locale: "nl-NL",
 +          environment: "test",
 +          onSubmit: (state, dropin) => {
