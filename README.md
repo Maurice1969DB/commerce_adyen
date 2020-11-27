@@ -9,6 +9,8 @@ An API-key and a merchant account need to be filled in to the configuration form
 This is a start of this implementation. Still much work needs to be done.
 Looking for a co-worker who is also working on this module. Let me know!
 
+Change YOUR_KEY to your own key!
+
 
 Remaining tasks
 
